@@ -192,3 +192,29 @@ def test_forecast_beats_straight_line_on_revenue():
     assert f.method != "linear_trend"
     assert f.backtest_mape < f.candidates["linear_trend"]
     assert (f.low <= f.forecast).all() and (f.forecast <= f.high).all()
+
+
+# ---------------- SQL shown to users ----------------
+
+def test_details_sql_is_specific_to_the_question():
+    """Details must show the query that produced THIS answer: real dates, only the columns and joins used."""
+    fy24 = resolve({"type": "fiscal_year", "value": "FY24"})
+    sql = M.compute(["net_revenue"], fy24).sql[0]
+    assert "'2023-04-01'" in sql and "'2024-04-01'" in sql and ":start" not in sql
+    assert "net_revenue" in sql and "cogs" not in sql and "units_sold" not in sql
+    assert "DimCustomer" not in sql and "product_cost" not in sql
+
+    margin_sql = M.compute(["gross_margin_pct"], fy24, dims=["category"]).sql[0]
+    assert "product_cost" in margin_sql and "GROUP BY category" in margin_sql
+
+    f = M.resolve_filters(["net_revenue"], {"distributor": ["Malwa"]})
+    dist_sql = M.compute(["net_revenue"], fy24, filters=f).sql[0]
+    assert "DimDistributor" in dist_sql and "'Malwa Region Distributors'" in dist_sql
+
+
+def test_shown_sql_returns_the_same_number():
+    """Running the SQL exactly as displayed gives the same value the app reported."""
+    fy24 = resolve({"type": "fiscal_year", "value": "FY24"})
+    res = M.compute(["gross_margin_pct"], fy24)
+    raw = read_sql(res.sql[0]).iloc[0]
+    assert (raw.net_revenue - raw.cogs) / raw.net_revenue * 100 == pytest.approx(res.df.gross_margin_pct.iloc[0], rel=REL)
