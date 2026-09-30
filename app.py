@@ -23,6 +23,14 @@ st.set_page_config(page_title="Ask bUlleTin", page_icon="📊", layout="centered
 styles.apply()
 
 
+SUGGESTIONS = [
+    "What was revenue in FY24?",
+    "Forecast revenue for the next 3 months",
+    "Gross margin by category in FY24",
+    "Top 5 products by revenue in FY24",
+]
+
+
 def greeting(name: str) -> str:
     hour = datetime.now(sidebar.user_tz()).hour
     part = "Good morning" if 5 <= hour < 12 else "Good afternoon" if 12 <= hour < 17 else "Good evening"
@@ -66,6 +74,11 @@ try:
         st.markdown(f'<div class="greeting">{greeting(user["name"])}</div>', unsafe_allow_html=True)
         st.markdown('<div class="greeting-sub">Ask about revenue, margins, inventory, suppliers or forecasts.</div>',
                     unsafe_allow_html=True)
+        with st.container(key="suggestions"):
+            cols = st.columns(2)
+            for i, text in enumerate(SUGGESTIONS):
+                cols[i % 2].button(text, key=f"suggest-{i}", width="stretch",
+                                   on_click=st.session_state.__setitem__, args=("pending_question", text))
 
     animate_key = st.session_state.pop("animate", None)   # only the newest answer gets typed
     for i, m in enumerate(messages):
@@ -79,7 +92,8 @@ try:
     if chat_full:
         st.info(f"This chat has reached its {MAX_TURNS}-question limit. Start a new chat to continue.")
 
-    question = st.chat_input("Ask bUlleTin...", disabled=chat_full)
+    # A clicked suggestion is asked exactly like a typed question.
+    question = st.chat_input("Ask bUlleTin...", disabled=chat_full) or st.session_state.pop("pending_question", None)
 
     # ============================================================
     # 3. Answer a question

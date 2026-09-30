@@ -67,6 +67,7 @@ Questions outside the metric catalog fall back to AI-written SQL, labelled **Low
 | Stateless agent, history in Supabase | Conversations survive restarts and days-later visits | Context lost on every restart |
 | Row Level Security + login | Users only see their own chats | Anyone could read all chats |
 | Usage table only the server can write | 30 questions per user per day can't be reset by users | Unbounded AI cost |
+One Vega-Lite spec for both apps | agent/charts.py builds the chart and its table from one DataFrame, so they can never disagree.
 
 ## Architecture
 

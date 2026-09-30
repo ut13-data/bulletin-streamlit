@@ -2,7 +2,7 @@
 A small in-memory stand-in for the Supabase client, for tests only.
 
 Supports the calls the app makes (table().select/insert/update/delete with
-eq/gte/order/limit, and auth sign_up / sign_in / sign_out), and imitates Row
+eq/gte/order/limit, and auth sign_up / sign_in / sign_out / update_user), and imitates Row
 Level Security: a signed-in client only sees rows with its own user_id, and the
 usage table is invisible to anyone but the admin (service key) client.
 """
@@ -13,7 +13,7 @@ from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
 DB = {"chats": [], "messages": [], "usage": []}
-USERS = {}          # email -> {"id", "password", "name"}
+USERS = {}          # email -> {"id", "password", "data"}   (data = user_metadata: name, settings)
 _clock = itertools.count()
 
 
@@ -117,7 +117,7 @@ class _Auth:
         if email in USERS:
             raise Exception("User already registered")
         uid = str(uuid.uuid4())
-        USERS[email] = {"id": uid, "password": creds["password"], "name": creds["options"]["data"]["name"]}
+        USERS[email] = {"id": uid, "password": creds["password"], "data": dict(creds["options"]["data"])}
         return self._session(email)
 
     def sign_in_with_password(self, creds):
@@ -129,11 +129,22 @@ class _Auth:
     def sign_out(self):
         self.client.user_id = None
 
-    def _session(self, email):
+    def update_user(self, attrs):
+        """Like Supabase: merges attrs["data"] into the signed-in user's user_metadata."""
+        email = next((e for e, u in USERS.items() if u["id"] == self.client.user_id), None)
+        if email is None:
+            raise Exception("Auth session missing!")
+        USERS[email]["data"].update(copy.deepcopy(attrs.get("data", {})))
+        return SimpleNamespace(user=self._user(email))
+
+    @staticmethod
+    def _user(email):
         u = USERS[email]
-        self.client.user_id = u["id"]
-        user = SimpleNamespace(id=u["id"], email=email, user_metadata={"name": u["name"]})
-        return SimpleNamespace(user=user, session=SimpleNamespace(access_token="t"))
+        return SimpleNamespace(id=u["id"], email=email, user_metadata=copy.deepcopy(u["data"]))
+
+    def _session(self, email):
+        self.client.user_id = USERS[email]["id"]
+        return SimpleNamespace(user=self._user(email), session=SimpleNamespace(access_token="t"))
 
 
 class FakeClient:

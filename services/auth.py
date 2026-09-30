@@ -11,11 +11,19 @@ Login, registration and the two Supabase connections.
 
 Never put the user client in st.cache_resource: that cache is shared by every
 visitor, so one person's login would leak to everyone.
+
+Settings (for example which view chart answers open in) are saved on the user's
+Supabase account in user_metadata, next to their name. No extra table is needed,
+and they follow the user to any device.
 """
 import streamlit as st
 from supabase import Client, create_client
 
 from agent.config import get_secret
+
+# Session-state keys that settings are copied into, so the rest of the app just reads st.session_state.
+DEFAULT_VIEW_KEY = "default_chart_view"          # "table" | "chart"
+SETTING_DEFAULTS = {DEFAULT_VIEW_KEY: "table"}
 
 
 def user_client() -> Client:
@@ -34,14 +42,38 @@ def current_user() -> dict | None:
     return st.session_state.get("user")
 
 
+def _apply_settings(settings: dict):
+    for key, default in SETTING_DEFAULTS.items():
+        st.session_state[key] = settings.get(key, default)
+
+
 def _remember(user) -> dict:
     meta = user.user_metadata or {}
-    info = {"id": user.id, "email": user.email, "name": meta.get("name") or user.email.split("@")[0]}
+    info = {"id": user.id, "email": user.email, "name": meta.get("name") or user.email.split("@")[0],
+            "settings": dict(meta.get("settings") or {})}
     st.session_state["user"] = info
+    _apply_settings(info["settings"])
     return info
 
 
+def save_settings(**changes) -> str | None:
+    """Save settings to the user's account. Returns an error message, or None on success."""
+    user = current_user()
+    if not user:
+        return "Please log in again."
+    settings = {**user.get("settings", {}), **changes}
+    try:
+        # The name is sent too, so it is kept whether Supabase merges or replaces user_metadata.
+        user_client().auth.update_user({"data": {"name": user["name"], "settings": settings}})
+    except Exception as e:
+        return _friendly(e)
+    user["settings"] = settings
+    _apply_settings(settings)
+    return None
+
+
 def _friendly(error: Exception) -> str:
+    print(f"AUTH ERROR: {type(error).__name__}: {error}")   # shows the real reason in the terminal
     msg = str(error).lower()
     if "invalid login credentials" in msg:
         return "Wrong email or password."
@@ -84,5 +116,5 @@ def sign_out():
         user_client().auth.sign_out()
     except Exception:
         pass
-    for key in ("user", "sb_client", "current_chat", "animate"):
+    for key in ("user", "sb_client", "current_chat", "animate", "settings-view", *SETTING_DEFAULTS):
         st.session_state.pop(key, None)

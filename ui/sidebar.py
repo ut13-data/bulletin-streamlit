@@ -1,10 +1,12 @@
-"""Sidebar: user, new chat, search, chats grouped by day (with rename and delete), log out."""
+"""Sidebar: wordmark, new chat, search, chats grouped by day (with rename and delete), account footer."""
+import html
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
 import streamlit as st
 
 from services import auth
+from ui import settings
 
 
 def user_tz() -> ZoneInfo:
@@ -34,30 +36,40 @@ def open_chat(chat_id: str | None):
 
 
 def _chat_row(store, chat: dict, is_current: bool):
-    left, right = st.columns([0.84, 0.16], vertical_alignment="center")
-    left.button(chat["title"], key=f"open-{chat['id']}", on_click=open_chat, args=(chat["id"],),
-                type="tertiary" if is_current else "secondary", width="stretch")
-    with right.popover("", icon=":material/more_vert:"):
-        new_title = st.text_input("Rename", value=chat["title"], key=f"title-{chat['id']}")
-        if st.button("Save name", key=f"save-{chat['id']}", width="stretch"):
-            store.rename_chat(chat["id"], new_title)
-            st.rerun()
-        st.divider()
-        sure = st.checkbox("Yes, delete this chat", key=f"sure-{chat['id']}")
-        if st.button("Delete", key=f"del-{chat['id']}", disabled=not sure, width="stretch"):
-            store.delete_chat(chat["id"])
-            if is_current:
-                open_chat(None)
-            st.rerun()
+    # The container key becomes a CSS class (st-key-...), which is how styles.py styles rows.
+    with st.container(key=f"chatrow-{'active-' if is_current else ''}{chat['id']}"):
+        left, right = st.columns([0.86, 0.14], vertical_alignment="center")
+        left.button(chat["title"], key=f"open-{chat['id']}", on_click=open_chat, args=(chat["id"],),
+                    type="tertiary", width="stretch")
+        with right.popover("", icon=":material/more_horiz:"):
+            new_title = st.text_input("Rename", value=chat["title"], key=f"title-{chat['id']}")
+            if st.button("Save name", key=f"save-{chat['id']}", width="stretch"):
+                store.rename_chat(chat["id"], new_title)
+                st.rerun()
+            st.divider()
+            sure = st.checkbox("Yes, delete this chat", key=f"sure-{chat['id']}")
+            if st.button("Delete", key=f"del-{chat['id']}", disabled=not sure, width="stretch"):
+                store.delete_chat(chat["id"])
+                if is_current:
+                    open_chat(None)
+                st.rerun()
+
+
+def _wordmark() -> str:
+    # The capitals in bUlleTin are U and T; they carry the accent.
+    # The plain name is kept once for screen readers (and tests); the styled one is decorative.
+    return ('<div class="brand"><span class="sr-only">bUlleTin</span><span aria-hidden="true">b<span>U</span>lle<span>T</span>in</span></div>'
+            '<div class="brand-sub">Balaji Pharma analytics</div>')
 
 
 def render(store, user: dict):
     with st.sidebar:
-        st.markdown("### bUlleTin")
-        st.markdown(f'<div class="sidebar-user">Signed in as {user["name"]}</div>', unsafe_allow_html=True)
-        if st.button("New chat", icon=":material/add:", type="primary", width="stretch"):
-            open_chat(None)
-        search = st.text_input("Search", placeholder="Search chats", label_visibility="collapsed")
+        st.markdown(_wordmark(), unsafe_allow_html=True)
+        with st.container(key="newchat"):
+            if st.button("New chat", icon=":material/edit_square:", width="stretch"):
+                open_chat(None)
+        search = st.text_input("Search", placeholder="Search chats", label_visibility="collapsed",
+                               icon=":material/search:")
 
         chats = [c for c in store.list_chats() if search.lower() in c["title"].lower()]
         current_group = None
@@ -70,8 +82,19 @@ def render(store, user: dict):
         if not chats and search:
             st.caption("No chats match.")
 
-        st.divider()
-        if st.button("Log out", icon=":material/logout:", width="stretch"):
-            auth.sign_out()
-            st.query_params.clear()
-            st.rerun()
+        with st.container(key="sidebar-footer"):
+            initial = html.escape((user["name"] or "?")[0].upper())
+            st.markdown(f'<div class="account"><span class="avatar">{initial}</span>'
+                        f'<span>{html.escape(user["name"])}<br><span class="email">'
+                        f'{html.escape(user["email"])}</span></span></div>', unsafe_allow_html=True)
+            left, right = st.columns(2)
+            left.button("Settings", icon=":material/settings:", key="open-settings", type="tertiary",
+                        on_click=st.session_state.__setitem__, args=("show-settings", True))
+            if right.button("Log out", icon=":material/logout:", type="tertiary"):
+                auth.sign_out()
+                st.query_params.clear()
+                st.rerun()
+
+    # Dialogs open from the main script, not from inside the sidebar block.
+    if st.session_state.pop("show-settings", False):
+        settings.open_dialog(user)

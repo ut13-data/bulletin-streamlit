@@ -5,7 +5,7 @@ from services import auth
 
 
 def render():
-    st.markdown('<div class="login-title">bUlleTin</div>', unsafe_allow_html=True)
+    st.markdown('<div class="login-title"><span class="sr-only">bUlleTin</span><span aria-hidden="true">b<span>U</span>lle<span>T</span>in</span></div>', unsafe_allow_html=True)
     st.markdown('<div class="login-sub">Ask Balaji Pharma\'s data anything.</div>', unsafe_allow_html=True)
 
     _, middle, _ = st.columns([1, 2, 1])

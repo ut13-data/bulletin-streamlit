@@ -12,6 +12,10 @@ Operations:
   breakdown  a metric split by a dimension (category, product, distributor, ...)
   forecast   future months, with a backtested model choice
   scenario   what-if on price, volume, unit cost or discount
+
+Charts: every operation hands its numbers to agent/charts.py, which returns
+chart_spec (Vega-Lite) and chart_table (same numbers as a wide table).
+The old `chart` dict is still built for the React app until it reads chart_spec.
 """
 import math
 from dataclasses import dataclass, field
@@ -20,6 +24,7 @@ from typing import Literal
 import pandas as pd
 from pydantic import BaseModel, Field, model_validator
 
+from agent import charts as C
 from agent import metrics as M
 from agent.formatting import fmt, fmt_change, inr
 from agent.forecasting import confidence_from_mape, forecast_monthly
@@ -72,7 +77,9 @@ class MetricQuery(BaseModel):
 class Answer:
     explanation: str
     confidence: str
-    chart: dict | None = None
+    chart: dict | None = None                     # legacy format, React only (remove when React reads chart_spec)
+    chart_spec: dict | None = None                # Vega-Lite spec from agent/charts.py
+    chart_table: dict | None = None               # the same numbers as a wide table
     table: list[dict] = field(default_factory=list)
     notes: list[str] = field(default_factory=list)
     definitions: list[str] = field(default_factory=list)
@@ -121,6 +128,7 @@ def _same_unit_metrics(keys: list[str]) -> list[str]:
 
 
 def _chart(style: str, title: str, x: list[str], series: dict[str, list], unit: str) -> dict:
+    """LEGACY chart dict for the React app (via backend for_react). Remove when React reads chart_spec."""
     return {
         "style": style,
         "title": title,
@@ -129,6 +137,13 @@ def _chart(style: str, title: str, x: list[str], series: dict[str, list], unit: 
                    for n, vals in series.items()],
         "unit": unit,
     }
+
+
+def _visual(kind: str, title: str, x: list, series: dict[str, list], unit: str,
+            x_label: str | None = None) -> dict:
+    """chart_spec + chart_table from one long frame, so the chart and the table can never disagree."""
+    spec, table = C.build_visual(C.long_frame(x, series), kind, unit, title, x_label)
+    return {"chart_spec": spec, "chart_table": table}
 
 
 def _previous_comparable(p: ResolvedPeriod) -> tuple[ResolvedPeriod, ResolvedPeriod] | None:
@@ -283,13 +298,15 @@ def op_compare(q: MetricQuery) -> Answer:
                          + "; ".join(lfl_lines) + ".")
 
     keys = _same_unit_metrics(q.metrics)
-    chart = _chart("bar", f"{' vs '.join(M.metric(k).label for k in keys)} by period",
-                   [p.short for p in periods],
-                   {M.metric(k).label: [values[p.short].get(k) for p in periods] for k in keys},
-                   M.metric(keys[0]).unit)
+    c_title = f"{' vs '.join(M.metric(k).label for k in keys)} by period"
+    c_x = [p.short for p in periods]
+    c_series = {M.metric(k).label: [values[p.short].get(k) for p in periods] for k in keys}
+    c_unit = M.metric(keys[0]).unit
+    chart = _chart("bar", c_title, c_x, c_series, c_unit)
+    visual = _visual("compare", c_title, c_x, c_series, c_unit, "Period")
 
     return Answer(
-        explanation="\n\n".join(lines), confidence=_confidence(periods), chart=chart, table=table,
+        explanation="\n\n".join(lines), confidence=_confidence(periods), chart=chart, table=table, **visual,
         notes=[n for n in notes if n], definitions=_definitions(q.metrics), sql=sqls, facts=facts,
     )
 
@@ -364,13 +381,15 @@ def op_trend(q: MetricQuery) -> Answer:
         notes.append(p.coverage_note)
 
     keys = _same_unit_metrics(q.metrics)
-    chart = _chart("line", f"{grain_word} {', '.join(M.metric(k).label for k in keys)}", x,
-                   {M.metric(k).label: df[k].tolist() for k in keys}, M.metric(keys[0]).unit)
+    c_title = f"{grain_word} {', '.join(M.metric(k).label for k in keys)}"
+    c_series = {M.metric(k).label: df[k].tolist() for k in keys}
+    chart = _chart("line", c_title, x, c_series, M.metric(keys[0]).unit)
+    visual = _visual("trend", c_title, x, c_series, M.metric(keys[0]).unit, "Period")
     table = [{"Period": lbl, **{M.metric(k).label: fmt(k, r[k], exact=True) for k in q.metrics}}
              for lbl, (_, r) in zip(x, df.iterrows())]
 
     return Answer(explanation="\n\n".join(lines), confidence=_confidence([p]), chart=chart, table=table,
-                  notes=notes, definitions=_definitions(q.metrics), sql=res.sql, facts=facts)
+                  notes=notes, definitions=_definitions(q.metrics), sql=res.sql, facts=facts, **visual)
 
 
 # ============================================================
@@ -430,8 +449,10 @@ def op_breakdown(q: MetricQuery) -> Answer:
     if p.is_partial:
         notes.append(p.coverage_note)
 
-    chart = _chart("bar", f"{m.label} by {dim_label.lower()}, {p.short}", shown[q.dimension].tolist(),
-                   {m.label: shown[k].tolist()}, m.unit)
+    c_title = f"{m.label} by {dim_label.lower()}, {p.short}"
+    c_x, c_series = shown[q.dimension].tolist(), {m.label: shown[k].tolist()}
+    chart = _chart("bar", c_title, c_x, c_series, m.unit)
+    visual = _visual("breakdown", c_title, c_x, c_series, m.unit, dim_label)
     table = []
     for _, r in df.iterrows():
         row = {dim_label: r[q.dimension], **{M.metric(x).label: fmt(x, r[x], exact=True) for x in q.metrics}}
@@ -445,7 +466,7 @@ def op_breakdown(q: MetricQuery) -> Answer:
              "overall": fmt(k, total)}
 
     return Answer(explanation=text, confidence=_confidence([p]), chart=chart, table=table, notes=notes,
-                  definitions=_definitions(q.metrics), sql=res.sql + total_res.sql, facts=facts)
+                  definitions=_definitions(q.metrics), sql=res.sql + total_res.sql, facts=facts, **visual)
 
 
 # ============================================================
@@ -517,15 +538,22 @@ def op_forecast(q: MetricQuery) -> Answer:
     fc_line = [None] * (n_h - 1) + [h.values[-1]] + list(f.forecast.values)
     low = [None] * (n_h - 1) + [h.values[-1]] + list(f.low.values)
     high = [None] * (n_h - 1) + [h.values[-1]] + list(f.high.values)
-    chart = _chart("line", f"{m.label}: actual and forecast", x,
+    c_title = f"{m.label}: actual and forecast"
+    chart = _chart("line", c_title, x,
                    {"Actual": actual, "Forecast": fc_line, "Likely low": low, "Likely high": high}, m.unit)
+    # New visual: no join point in the data; charts.py adds it to the chart only (table stays clean).
+    pad = [None] * n_h
+    visual = _visual("forecast", c_title, x,
+                     {"Actual": actual, "Forecast": pad + list(f.forecast.values),
+                      "Likely low": pad + list(f.low.values), "Likely high": pad + list(f.high.values)},
+                     m.unit, "Month")
 
     conf_level = confidence_from_mape(f.backtest_mape, len(hist))
     confidence = (f"{conf_level} - this method missed recent known months by {f.backtest_mape:.1f}% on average"
                   if f.backtest_mape is not None else f"{conf_level} - no backtest was possible")
 
     return Answer(explanation="\n".join(lines), confidence=confidence, chart=chart, table=rows, notes=notes,
-                  definitions=_definitions([k]), sql=res.sql, facts=facts)
+                  definitions=_definitions([k]), sql=res.sql, facts=facts, **visual)
 
 
 # ============================================================
@@ -579,9 +607,11 @@ def op_scenario(q: MetricQuery) -> Answer:
     table.append({"Metric": "Gross margin", "Current": f"{gm_before:.1f}%", "Scenario": f"{gm_after:.1f}%",
                   "Change": f"{gm_after - gm_before:+.1f} pts"})
 
-    chart = _chart("bar", "Current vs scenario", ["Net revenue", "COGS", "Gross profit"],
-                   {"Current": [before[k] for k in ("net_revenue", "cogs", "gross_profit")],
-                    "Scenario": [after[k] for k in ("net_revenue", "cogs", "gross_profit")]}, "inr")
+    c_x = ["Net revenue", "COGS", "Gross profit"]
+    c_series = {"Current": [before[k] for k in ("net_revenue", "cogs", "gross_profit")],
+                "Scenario": [after[k] for k in ("net_revenue", "cogs", "gross_profit")]}
+    chart = _chart("bar", "Current vs scenario", c_x, c_series, "inr")
+    visual = _visual("scenario", "Current vs scenario", c_x, c_series, "inr", "Metric")
 
     notes = ["This is a simple driver model: it doesn't estimate how customers react (for example, "
              "fewer units sold after a price rise) unless you include that change yourself."]
@@ -594,7 +624,7 @@ def op_scenario(q: MetricQuery) -> Answer:
     return Answer(explanation="\n".join(lines),
                   confidence="Moderate - exact arithmetic on actual data, but the scenario itself is an assumption",
                   chart=chart, table=table, notes=notes, definitions=_definitions(keys[2:6]), sql=res.sql,
-                  facts=facts)
+                  facts=facts, **visual)
 
 
 # ============================================================

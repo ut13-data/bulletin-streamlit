@@ -1,12 +1,15 @@
 """
 The whole Streamlit app, run headless with a fake Supabase and a fake LLM.
 Covers: login gate, register, asking, saved chats, follow-up context, rename,
-delete, the 30-a-day limit, and that one user can't see another user's chats.
+delete, the 30-a-day limit, that one user can't see another user's chats, the
+table/chart view (default view, per-answer switch, old saved charts), the settings
+dialog (saved to the user's account) and the suggested questions.
 """
 import pytest
 from streamlit.testing.v1 import AppTest
 
 from agent import llm
+from services.auth import DEFAULT_VIEW_KEY
 from services import auth
 from tests import fake_supabase
 from tests.test_pipeline import FakeLLM, q
@@ -79,12 +82,96 @@ def test_chat_is_saved_and_follow_up_has_context(app):
     assert any(b.label == "What was revenue in FY24?" for b in app.sidebar.button)
 
 
+def charts(at):
+    return at.get("vega_lite_chart")
+
+
+def answer_key(index: int) -> str:
+    return f"{fake_supabase.DB['chats'][0]['id']}-{index}"
+
+
 def test_forecast_answer_renders_with_chart(app):
     register(app)
     ask(app, "Forecast revenue for the next 3 months")
     saved = fake_supabase.DB["messages"][1]["response"]
-    assert saved["chart"]["series"][1]["name"] == "Forecast"
+    assert saved["chart"]["series"][1]["name"] == "Forecast"          # legacy field, still sent for React
+    assert saved["chart_spec"]["$schema"].endswith("/v6.json")          # new fields are saved too
+    assert saved["chart_table"]["columns"][0]["label"] == "Month"
     assert len(app.expander) == 1                       # Details section
+
+
+def test_answers_open_in_table_view_and_switch_to_chart(app):
+    register(app)
+    ask(app, "Forecast revenue for the next 3 months")
+    view = f"view-{answer_key(1)}"
+    assert app.session_state[view] == "table"
+    assert len(charts(app)) == 0 and len(app.get("button_group")) == 1
+    tables_before = len(app.dataframe)                  # table view + the Details "Numbers" table
+
+    app.session_state[view] = "chart"
+    app.run()
+    assert not app.exception, app.exception
+    assert len(charts(app)) == 1 and len(app.dataframe) == tables_before - 1
+
+
+def open_settings(at):
+    at.button(key="open-settings").click().run()
+    assert not at.exception, at.exception
+
+
+def test_settings_dialog_saves_default_view_to_the_account(app):
+    register(app)
+    open_settings(app)
+    toggles = {t.label: t.disabled for t in app.toggle}
+    assert toggles == {"Add to dashboard": True, "Customise dashboard": True}   # placeholders
+    app.button_group(key="settings-view").set_value("chart").run()
+    assert not app.exception, app.exception
+    assert fake_supabase.USERS["ut@example.com"]["data"]["settings"] == {DEFAULT_VIEW_KEY: "chart"}
+    assert fake_supabase.USERS["ut@example.com"]["data"]["name"] == "UT"      # name kept
+
+    ask(app, "Forecast revenue for the next 3 months")
+    assert len(charts(app)) == 1                         # opens as a chart now
+    assert len(app.get("button_group")) == 1             # and the switch is still there
+
+
+def test_saved_setting_comes_back_after_logging_in_again(app):
+    register(app)
+    open_settings(app)
+    app.button_group(key="settings-view").set_value("chart").run()
+    [b for b in app.sidebar.button if b.label == "Log out"][0].click().run()
+    [t for t in app.text_input if t.label == "Email"][0].set_value("ut@example.com")
+    [t for t in app.text_input if t.label == "Password"][0].set_value("secret123")
+    [b for b in app.button if b.label == "Log in"][0].click().run()
+    assert app.session_state[DEFAULT_VIEW_KEY] == "chart"
+
+
+def test_suggested_question_is_asked(app):
+    register(app)
+    app.button(key="suggest-1").click().run()          # "Forecast revenue for the next 3 months"
+    assert not app.exception, app.exception
+    assert [m["role"] for m in fake_supabase.DB["messages"]] == ["user", "assistant"]
+    assert fake_supabase.DB["messages"][0]["content"] == "Forecast revenue for the next 3 months"
+
+
+def test_old_saved_chart_still_renders(app):
+    """Messages saved before chart_spec existed only have the old `chart` dict."""
+    register(app)
+    ask(app, "What was revenue in FY24?")
+    old = dict(fake_supabase.DB["messages"][1])
+    old.update(id="old-msg", created_at=fake_supabase._now_iso(), content="old answer", response={
+        "route_decision": "metric", "found": True, "confidence": "High", "explanation": "old answer",
+        "chart": {"style": "line", "title": "Net revenue: actual and forecast", "unit": "inr",
+                  "x_axis_data": ["2024-11", "2024-12", "2025-01"],
+                  "series": [{"name": "Actual", "values": [2.6e6, 2.7e6, None]},
+                             {"name": "Forecast", "values": [None, 2.7e6, 2.4e6]}]}})
+    fake_supabase.DB["messages"].append(old)
+    app.run()
+    assert not app.exception, app.exception
+    assert app.session_state[f"view-{answer_key(2)}"] == "table"
+    app.session_state[f"view-{answer_key(2)}"] = "chart"
+    app.run()
+    assert not app.exception, app.exception
+    assert len(charts(app)) == 1
 
 
 def test_rename_and_delete(app):

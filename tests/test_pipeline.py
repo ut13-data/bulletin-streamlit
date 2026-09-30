@@ -90,6 +90,15 @@ def test_recommendation_with_numbers_is_rejected(fake):
     r = graph.run_agent("forecast", [])
     assert r["recommendation"] == ""              # both attempts contained digits
     assert "Jan 2025" in r["explanation"] and r["chart"]["series"][1]["name"] == "Forecast"
+    # New chart fields travel with the response (and get saved to Supabase with it).
+    assert r["chart_spec"]["$schema"].endswith("/v6.json")
+    assert [c["label"] for c in r["chart_table"]["columns"]][:3] == ["Month", "Actual", "Forecast"]
+
+
+def test_answers_without_a_chart_have_empty_chart_fields(fake):
+    fake({"What was revenue in FY24?": q("value", ["net_revenue"], [{"type": "fiscal_year", "value": "FY24"}])})
+    r = graph.run_agent("What was revenue in FY24?", [])
+    assert r["chart_spec"] is None and r["chart_table"] is None
 
 
 def test_recommendation_may_name_products_with_digits(fake):

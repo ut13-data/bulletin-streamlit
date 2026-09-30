@@ -46,7 +46,8 @@ class State(TypedDict, total=False):
 def _base(route: str, explanation: str, found: bool, confidence: str, **extra) -> dict:
     out = {
         "route_decision": route, "explanation": explanation, "found": found, "confidence": confidence,
-        "evidence": "", "recommendation": "", "sources": [], "chart": None, "plan": [], "query": None,
+        "evidence": "", "recommendation": "", "sources": [], "chart": None, "chart_spec": None,
+        "chart_table": None, "plan": [], "query": None,
         "table": [], "notes": [], "definitions": [], "sql": [], "data_through": data_window_text(),
     }
     out.update(extra)
@@ -84,7 +85,8 @@ def metric_node(state: State) -> State:
     evidence = "Definitions: " + " | ".join(ans.definitions)
     state["result"] = _base(
         "metric", ans.explanation, ans.found, ans.confidence,
-        evidence=evidence, chart=ans.chart, table=ans.table, notes=ans.notes, definitions=ans.definitions,
+        evidence=evidence, chart=ans.chart, chart_spec=ans.chart_spec, chart_table=ans.chart_table,
+        table=ans.table, notes=ans.notes, definitions=ans.definitions,
         sql=ans.sql, query=q.model_dump(), facts=ans.facts,
         plan=[{"agent": "metric", "goal": f"{q.operation}: {', '.join(q.metrics)}"}],
     )
