@@ -154,3 +154,24 @@ def test_nulls_and_bare_strings_from_model_are_tolerated(fake):
         "sort": None, "horizon": None, "scenario": None}}})
     r = graph.run_agent("messy", [])
     assert r["found"] and "Malwa Region Distributors" in r["explanation"]
+
+
+def test_unsupported_request_gets_a_polite_no(fake):
+    f = fake({"Can you give the above report as a PDF?": {"intent": "unsupported", "query": None}})
+    r = graph.run_agent("Can you give the above report as a PDF?", [])
+    assert r["route_decision"] == "unsupported" and not r["found"]
+    assert r["explanation"].startswith("Sorry, I can't do that yet.")
+    assert r["recommendation"] == "" and len(f.calls) == 1      # no second AI call
+
+
+def test_brief_is_computed_in_code(fake):
+    fake({"Can you give me a brief?": {"intent": "brief", "query": None, "period": None},
+          "Give me a report for FY25": {"intent": "brief", "query": None,
+                                        "period": [{"type": "fiscal_year", "value": "FY25"}]}})
+    r = graph.run_agent("Can you give me a brief?", [])
+    assert r["route_decision"] == "brief" and r["found"]
+    assert "FY24" in r["explanation"] and "₹2.07 Cr" in r["explanation"] and "+17.2%" in r["explanation"]
+    assert "Arishta sells below production cost" in r["explanation"]
+    assert r["recommendation"] and r["sql"] and r["confidence"].startswith("High")
+    p = graph.run_agent("Give me a report for FY25", [])       # partial year: compared like-for-like
+    assert "+19.5%" in p["explanation"] and p["confidence"].startswith("Moderate")

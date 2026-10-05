@@ -7,7 +7,7 @@ Ask a business question in plain English ("Forecast revenue for the next 3 month
 lowest margin?", "What if raw material costs rise 10%?") and get an answer with the numbers, a chart,
 a recommendation, a confidence level, and a Details section showing the formulas and SQL used.
 
-**Live app:** https://bulletin-app-streamask.streamlit.app/
+**Live app:** _add your Streamlit link here_
 
 ---
 
@@ -40,8 +40,10 @@ this class of error rather than patching prompts one by one.
 | Forecast | Revenue for the next 3 months, with a likely range |
 | What-if | Price +5%, raw material cost +10%, discount +2 points |
 | Definitions | How is DIO calculated? What does the company do? (catalog or business documents) |
+| Brief | Can you give me a brief? (sales, margin, inventory and supply vs the previous period, plus watch-outs) |
 
 Questions outside the metric catalog fall back to AI-written SQL, labelled **Low confidence**, with the SQL shown.
+Requests the app can't carry out, like "make this a PDF", get a polite no instead of a wrong answer.
 
 ## Findings from building it
 
@@ -104,8 +106,8 @@ All ratios are ratio-of-sums. The full list is in `agent/metrics.py`.
 ## Testing
 
 ```
-python -m pytest -q tests      # 50 tests, no API keys needed
-python test_agent.py           # checks the real AI reads 16 questions correctly
+python -m pytest -q tests      # 52 tests, no API keys needed
+python test_agent.py           # checks the real AI reads 19 questions correctly
 ```
 
 - Every metric is recalculated independently in pandas and must match.

@@ -56,6 +56,9 @@ QUESTIONS = [
      lambda p: p.query.operation == "compare" and p.query.metrics == ["net_revenue"]
      and sorted(period_shorts(p.query)) == ["FY23", "FY24"]),
     ("What is the weather in Indore?", [], lambda p: p.intent == "off_topic"),
+    ("Can you give the above report as a PDF?", [], lambda p: p.intent == "unsupported"),
+    ("Can you give me a brief?", [], lambda p: p.intent == "brief"),
+    ("Summarise our chat so far", [], lambda p: p.intent == "conversation"),
 ]
 
 
